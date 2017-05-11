@@ -1027,7 +1027,7 @@ because ESC was pressed.
 
 ### autoplayBlocked(tabId) 
 
-Notifies autoplay has been blocked
+Notifies autoplay has been blockedanged
 
 **Parameters**
 
@@ -1042,6 +1042,18 @@ Indicates that the urlbar text has changed, usually from user input
 **Parameters**
 
 **location**: `string`, The text to set as the new navbar URL input
+
+
+
+### urlBarSuggestionsChanged(suggestionList, selectedIndex) 
+
+Indicates URL bar suggestions and selected index.
+
+**Parameters**
+
+**suggestionList**: `Array.&lt;Object&gt;`, The list of suggestions for the entered URL bar text. This can be generated from history, bookmarks, etc.
+
+**selectedIndex**: `number`, The index for the selected item (users can select items with down arrow on their keyboard)
 
 
 

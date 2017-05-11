@@ -1284,7 +1284,7 @@ const appActions = {
   },
 
   /**
-   * Notifies autoplay has been blocked
+   * Notifies autoplay has been blockedanged
    * @param {number} tabId - Tab id of current frame
    */
   autoplayBlocked: function (tabId) {
@@ -1307,7 +1307,22 @@ const appActions = {
         windowId
       }
     })
+  },
+
+  /**
+   * Indicates URL bar suggestions and selected index.
+   *
+   * @param {Object[]} suggestionList - The list of suggestions for the entered URL bar text. This can be generated from history, bookmarks, etc.
+   * @param {number} selectedIndex - The index for the selected item (users can select items with down arrow on their keyboard)
+   */
+  urlBarSuggestionsChanged: function (suggestionList, selectedIndex) {
+    AppDispatcher.dispatch({
+      actionType: appConstants.APP_URL_BAR_SUGGESTIONS_CHANGED,
+      suggestionList,
+      selectedIndex
+    })
   }
+
 }
 
 module.exports = appActions
