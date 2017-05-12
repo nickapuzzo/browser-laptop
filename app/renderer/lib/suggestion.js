@@ -7,15 +7,15 @@ const appConfig = require('../../../js/constants/appConfig')
 const _ = require('underscore')
 const Immutable = require('immutable')
 const {makeImmutable} = require('../../common/state/immutableUtil')
-const {aboutUrls, isNavigatableAboutPage, isSourceAboutUrl} = require('../../../js/lib/appUrlUtil')
+const {isUrl, aboutUrls, isNavigatableAboutPage, isSourceAboutUrl} = require('../../../js/lib/appUrlUtil')
 const suggestionTypes = require('../../../js/constants/suggestionTypes')
 const getSetting = require('../../../js/settings').getSetting
 const settings = require('../../../js/constants/settings')
-const appStoreRenderer = require('../../../js/stores/appStoreRenderer')
 const {isBookmark, isDefaultEntry, isHistoryEntry} = require('../../../js/state/siteUtil')
 const config = require('../../../js/constants/config')
 const top500 = require('../../../js/data/top500')
-const {activeFrameStatePath} = require('../../../js/state/frameStateUtil')
+const fetchSearchSuggestions = require('../fetchSearchSuggestions')
+const {getFrameByTabId, getTabsByWindowId} = require('../../common/state/tabState')
 
 const sigmoid = (t) => {
   return 1 / (1 + Math.pow(Math.E, -t))
@@ -256,7 +256,7 @@ const getMapListToElements = (urlLocationLower) => ({data, maxResults, type,
     }
 }) => {
   const suggestionsList = Immutable.List()
-  const formatUrl = (x) => typeof x === 'object' && x !== null ? x.get('location') : x
+  const formatUrl = (x) => typeof x === 'object' && x !== null ? x.get('location') || x.get('url') : x
   const formatTitle = (x) => typeof x === 'object' && x !== null ? x.get('title') : x
   const formatTabId = (x) => typeof x === 'object' && x !== null ? x.get('tabId') : x
   // Filter out things which are already in our own list at a smaller index
@@ -310,7 +310,7 @@ const getHistorySuggestions = (state, urlLocationLower) => {
 
       let historySites = new Immutable.List()
       let bookmarkSites = new Immutable.List()
-      const sites = appStoreRenderer.state.get('sites')
+      const sites = state.get('sites')
       sites.forEach(site => {
         if (!sitesFilter(site)) {
           return
@@ -362,23 +362,23 @@ const getAboutSuggestions = (state, urlLocationLower) => {
   })
 }
 
-const getOpenedTabSuggestions = (state, urlLocationLower) => {
+const getOpenedTabSuggestions = (state, windowId, urlLocationLower) => {
   return new Promise((resolve, reject) => {
     const sortHandler = sortBasedOnLocationPos(urlLocationLower)
     const mapListToElements = getMapListToElements(urlLocationLower)
+    const tabs = getTabsByWindowId(state, windowId)
     let suggestionsList = Immutable.List()
     if (getSetting(settings.OPENED_TAB_SUGGESTIONS)) {
-      const activeFrameKey = state.get('activeFrameKey')
       suggestionsList = mapListToElements({
-        data: state.get('frames'),
+        data: tabs,
         maxResults: config.urlBarSuggestions.maxOpenedFrames,
         type: suggestionTypes.TAB,
         sortHandler,
-        filterValue: (frame) => !isSourceAboutUrl(frame.get('location')) &&
-          frame.get('key') !== activeFrameKey &&
+        filterValue: (tab) => !isSourceAboutUrl(tab.get('url')) &&
+          !tab.get('active') &&
           (
-            (frame.get('title') && frame.get('title').toLowerCase().indexOf(urlLocationLower) !== -1) ||
-            (frame.get('location') && frame.get('location').toLowerCase().indexOf(urlLocationLower) !== -1)
+            (tab.get('title') && tab.get('title').toLowerCase().indexOf(urlLocationLower) !== -1) ||
+            (tab.get('url') && tab.get('url').toLowerCase().indexOf(urlLocationLower) !== -1)
           )
       })
     }
@@ -386,12 +386,13 @@ const getOpenedTabSuggestions = (state, urlLocationLower) => {
   })
 }
 
-const getSearchSuggestions = (state, urlLocationLower) => {
+const getSearchSuggestions = (state, tabId, urlLocationLower) => {
   return new Promise((resolve, reject) => {
     const mapListToElements = getMapListToElements(urlLocationLower)
     let suggestionsList = Immutable.List()
     if (getSetting(settings.OFFER_SEARCH_SUGGESTIONS)) {
-      const searchResults = state.getIn(activeFrameStatePath(state).concat(['navbar', 'urlbar', 'suggestions', 'searchResults']))
+      const frame = getFrameByTabId(state, tabId)
+      const searchResults = frame.getIn(['navbar', 'urlbar', 'suggestions', 'searchResults'])
       if (searchResults) {
         suggestionsList = mapListToElements({
           data: searchResults,
@@ -416,7 +417,7 @@ const getAlexaSuggestions = (state, urlLocationLower) => {
   })
 }
 
-const generateNewSuggestionsList = (state, urlLocation) => {
+const generateNewSuggestionsList = (state, windowId, tabId, urlLocation) => {
   if (!urlLocation) {
     return
   }
@@ -424,15 +425,48 @@ const generateNewSuggestionsList = (state, urlLocation) => {
   Promise.all([
     getHistorySuggestions(state, urlLocationLower),
     getAboutSuggestions(state, urlLocationLower),
-    getAboutSuggestions(state, urlLocationLower),
-    getOpenedTabSuggestions(state, urlLocationLower),
-    getSearchSuggestions(state, urlLocationLower),
+    getOpenedTabSuggestions(state, windowId, urlLocationLower),
+    getSearchSuggestions(state, tabId, urlLocationLower),
     getAlexaSuggestions(state, urlLocationLower)
   ]).then(([...suggestionsLists]) => {
     const appActions = require('../../../js/actions/appActions')
     // Flatten only 1 level deep for perf only, nested will be objects within arrrays
     appActions.urlBarSuggestionsChanged(makeImmutable(suggestionsLists).flatten(1))
   })
+}
+
+const generateNewSearchXHRResults = (state, windowId, tabId, input) => {
+  const frame = getFrameByTabId(state, tabId)
+  if (!frame) {
+    // Frame info may not be available yet in app store
+    return
+  }
+  const frameSearchDetail = frame.getIn(['navbar', 'urlbar', 'searchDetail'])
+  // TODO: Migrate searchDetail to app state
+  const searchDetail = state.get('searchDetail')
+  if (!searchDetail && !frameSearchDetail) {
+    return
+  }
+  const autocompleteURL = frameSearchDetail
+    ? frameSearchDetail.get('autocomplete')
+    : searchDetail.get('autocompleteURL')
+
+  const shouldDoSearchSuggestions = getSetting(settings.OFFER_SEARCH_SUGGESTIONS) &&
+    autocompleteURL &&
+    !isUrl(input) &&
+    input.length !== 0
+
+  if (shouldDoSearchSuggestions) {
+    if (searchDetail) {
+      const replaceRE = new RegExp('^' + searchDetail.get('shortcut') + ' ', 'g')
+      input = input.replace(replaceRE, '')
+    }
+
+    fetchSearchSuggestions(windowId, tabId, autocompleteURL, input)
+  } else {
+    const appActions = require('../../../js/actions/appActions')
+    appActions.searchSuggestionResultsAvailable(windowId, tabId, Immutable.List())
+  }
 }
 
 module.exports = {
@@ -449,5 +483,6 @@ module.exports = {
   getOpenedTabSuggestions,
   getSearchSuggestions,
   getAlexaSuggestions,
-  generateNewSuggestionsList
+  generateNewSuggestionsList,
+  generateNewSearchXHRResults
 }
