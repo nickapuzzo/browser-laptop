@@ -172,16 +172,20 @@ class Tab extends ImmutableComponent {
   }
 
   onMouseEnter (e) {
-    // relatedTarget inside mouseenter checks which element before this event was the pointer on
-    // if this element has a tab-like class, then it's likely that the user was previewing
-    // a sequency of tabs. Called here as previewMode.
-    const previewMode = /tab(?!pages)/i.test(e.relatedTarget.classList)
+    // Here is included all classes that mouse can come from if user
+    // is going from urlbar to webview or vice-versa
+    const fromVerticalAxis =
+      /^tab(?=stoolbar|pages)|^allowDragging|^singlePage|^bookmarks|^webview/i
+        .test(e.relatedTarget.classList)
 
-    // If user isn't in previewMode, we add a bit of delay to avoid tab from flashing out
-    // as reported here: https://github.com/brave/browser-laptop/issues/1434
+    // If user is making a vertical mouse movement, we add a bit of delay
+    // to avoid tab from flashing out as reported here:
+    // https://github.com/brave/browser-laptop/issues/1434
     if (this.props.previewTabs) {
-      this.hoverTimeout =
-        window.setTimeout(windowActions.setPreviewFrame.bind(null, this.frame), previewMode ? 0 : 200)
+      this.hoverTimeout = window.setTimeout(
+        windowActions.setPreviewFrame.bind(null, this.frame),
+        fromVerticalAxis ? 350 : 0
+      )
     }
     windowActions.setTabHoverState(this.frame, true)
   }
